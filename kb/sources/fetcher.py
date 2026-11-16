@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from kb.config import settings
+from kb.sources.url_guard import assert_public_url
 
 _robots_cache: dict[str, urllib.robotparser.RobotFileParser] = {}
 
@@ -47,28 +48,49 @@ async def _get_robot_parser(host: str, scheme: str) -> urllib.robotparser.RobotF
     return parser
 
 
+async def _send_following_public_redirects(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    """GET `url` and follow redirects by hand, so the URL guard checks every hop.
+
+    Returns an open streaming response: the caller must close it.
+    """
+    request = client.build_request("GET", url)
+    for _ in range(settings.max_redirects + 1):
+        await assert_public_url(str(request.url))
+        response = await client.send(request, stream=True)
+        if response.next_request is None:
+            return response
+        await response.aclose()
+        request = response.next_request
+    raise FetchError(f"More than {settings.max_redirects} redirects for {url!r}")
+
+
+async def _read_capped_body(response: httpx.Response, url: str) -> str:
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > settings.max_article_bytes:
+            raise FetchError(
+                f"Article exceeds max_article_bytes ({settings.max_article_bytes}): {url!r}"
+            )
+    return bytes(body).decode(response.encoding or "utf-8", errors="replace")
+
+
 async def fetch_article(url: str) -> FetchedPage:
+    """Fetch an article page. Raises `UnsafeUrlError` for any non-public hop, before any request."""
+    await assert_public_url(url)
     parts = urlsplit(url)
     parser = await _get_robot_parser(parts.hostname or "", parts.scheme or "https")
     if not parser.can_fetch(settings.user_agent, url):
         raise FetchError(f"robots.txt disallows fetching {url!r}")
 
-    async with (
-        httpx.AsyncClient(
-            headers={"User-Agent": settings.user_agent}, timeout=settings.request_timeout_s
-        ) as client,
-        client.stream("GET", url, follow_redirects=True) as response,
-    ):
-        response.raise_for_status()
-        body = bytearray()
-        async for chunk in response.aiter_bytes():
-            body.extend(chunk)
-            if len(body) > settings.max_article_bytes:
-                raise FetchError(
-                    f"Article exceeds max_article_bytes ({settings.max_article_bytes}): {url!r}"
-                )
-        html = bytes(body).decode(response.encoding or "utf-8", errors="replace")
-        final_url = str(response.url)
-        status_code = response.status_code
+    async with httpx.AsyncClient(
+        headers={"User-Agent": settings.user_agent}, timeout=settings.request_timeout_s
+    ) as client:
+        response = await _send_following_public_redirects(client, url)
+        try:
+            response.raise_for_status()
+            html = await _read_capped_body(response, url)
+        finally:
+            await response.aclose()
 
-    return FetchedPage(url=final_url, html=html, status_code=status_code)
+    return FetchedPage(url=str(response.url), html=html, status_code=response.status_code)

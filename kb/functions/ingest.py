@@ -1,6 +1,6 @@
 """kb/article.discovered -> ingest-article.
 
-Each step below is retried and memoized independently: 
+Each step below is retried and memoized independently:
 a failure in `embed` re-runs only `embed`, never re-fetching
 or re-parsing the article. Re-sending the same event produces zero new rows
 (upserts throughout: `articles` by `canonical_id`, `passages` by
@@ -49,6 +49,7 @@ from kb.sources.chunking import chunk_text
 from kb.sources.embedder import embed_texts
 from kb.sources.fetcher import fetch_article
 from kb.sources.parser import parse_html
+from kb.sources.url_guard import UnsafeUrlError
 
 
 @client.create_function(
@@ -84,6 +85,10 @@ async def ingest_article(ctx: inngest.Context) -> dict[str, object]:
     payload = ArticleDiscovered.model_validate(ctx.event.data)
 
     async def _check_allowlist() -> None:
+        # Manual articles may come from any public site: fetch_article's URL guard
+        # protects them. Feed articles must stay inside publications.yaml.
+        if payload.via == "manual":
+            return
         try:
             assert_allowed(payload.url, load_publications())
         except ValueError as exc:
@@ -92,7 +97,10 @@ async def ingest_article(ctx: inngest.Context) -> dict[str, object]:
     await ctx.step.run("check-allowlist", _check_allowlist)
 
     async def _fetch_html() -> dict[str, object]:
-        page = await fetch_article(payload.url)
+        try:
+            page = await fetch_article(payload.url)
+        except UnsafeUrlError as exc:
+            raise inngest.NonRetriableError(str(exc)) from exc
         return {"url": page.url, "html": page.html, "status_code": page.status_code}
 
     page = await ctx.step.run("fetch-html", _fetch_html)

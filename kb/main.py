@@ -51,7 +51,8 @@ from kb.schemas.events import (
     ResearchRequested,
 )
 from kb.schemas.ids import canonical_id, research_id
-from kb.sources.allowlist import find_publication_for_url, load_publications
+from kb.sources.allowlist import load_publications, publication_for_manual_url
+from kb.sources.url_guard import assert_public_url
 
 
 @contextlib.asynccontextmanager
@@ -126,14 +127,15 @@ async def add_manual_article(payload: ArticleManual) -> dict[str, Any]:
     The event is tagged `via="manual"`, which `ingest-article`'s priority
     expression turns into a +`priority_manual_s` time shift: Inngest schedules
     the run as if it had arrived that many seconds earlier, so it takes the next
-    free slot for its publication. The URL's host must be in `publications.yaml`.
+    free slot for its publication.
+
+    The URL can be any public http(s) page. A host in `publications.yaml` keeps
+    its publication; any other host gets a `web-<host>` publication, which is
+    never polled. URLs that resolve to a local or private address are rejected.
     """
-    pub = find_publication_for_url(payload.url, load_publications())
-    if pub is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Article URL is outside the allowlist (publications.yaml): {payload.url!r}",
-        )
+    await assert_public_url(payload.url)
+    pub = publication_for_manual_url(payload.url, load_publications())
+    article_canonical_id = canonical_id(pub.slug, payload.url)
 
     async with get_session() as session:
         publication_id = await upsert_publication(
@@ -148,7 +150,7 @@ async def add_manual_article(payload: ArticleManual) -> dict[str, Any]:
     event = inngest.Event(
         name=ARTICLE_DISCOVERED,
         data=ArticleDiscovered(
-            canonical_id=canonical_id(pub.slug, payload.url),
+            canonical_id=article_canonical_id,
             publication_id=publication_id,
             url=payload.url,
             title=payload.title or "Manual ingestion",
@@ -376,6 +378,3 @@ async def get_weekly_digest() -> dict[str, Any]:
     if digest is None:
         return {"status": "empty", "digest": None}
     return digest
-
-
-

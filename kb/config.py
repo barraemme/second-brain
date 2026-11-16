@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     user_agent: str = "second-brain/0.1"
     request_timeout_s: float = 15.0
     max_article_bytes: int = 5_000_000
+    # fetch_article follows redirects by hand so the SSRF guard checks every hop.
+    max_redirects: int = 5
 
     # --- Chunking ---
     chunk_size: int = 1_000
@@ -112,4 +114,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

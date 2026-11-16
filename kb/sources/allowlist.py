@@ -57,6 +57,27 @@ def find_publication_for_url(
     return None
 
 
+def publication_for_manual_url(url: str, publications: list[PublicationEntry]) -> PublicationEntry:
+    """The allowlisted publication for `url`, or a `web-<host>` publication for any other host.
+
+    One publication per host keeps `canonical_id` stable and keeps `ingest-article`'s
+    per-publication concurrency limit per website. A web publication has no feed, and
+    the poller never sees it: `poll-feeds` reads only `publications.yaml`.
+    """
+    pub = find_publication_for_url(url, publications)
+    if pub is not None:
+        return pub
+    host = _host(url)
+    if not host:
+        raise ValueError(f"URL has no host: {url!r}")
+    return PublicationEntry(
+        slug=f"web-{host.replace('.', '-')}",
+        name=host,
+        feed_url="",
+        homepage=f"https://{host}",
+    )
+
+
 def assert_allowed(url: str, publications: list[PublicationEntry]) -> PublicationEntry:
     """Reject anything outside `publications.yaml`."""
     pub = find_publication_for_url(url, publications)
