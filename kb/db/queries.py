@@ -1,0 +1,1199 @@
+"""Every SQL statement in the project lives here. Functions and FastAPI endpoints
+call these helpers; they never build SQL themselves.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from kb.db.models import (
+    Article,
+    Claim,
+    Cost,
+    Cursor,
+    Digest,
+    EvalResult,
+    EvalRun,
+    Failure,
+    Job,
+    Passage,
+    Publication,
+    ResearchRun,
+    Snapshot,
+)
+
+
+async def upsert_publication(
+    session: AsyncSession, *, slug: str, name: str, feed_url: str, homepage: str
+) -> uuid.UUID:
+    stmt = (
+        insert(Publication)
+        .values(id=uuid.uuid4(), slug=slug, name=name, feed_url=feed_url, homepage=homepage)
+        .on_conflict_do_update(
+            index_elements=[Publication.slug],
+            set_={"name": name, "feed_url": feed_url, "homepage": homepage},
+        )
+        .returning(Publication.id)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_publication_by_slug(session: AsyncSession, slug: str) -> Publication | None:
+    return (
+        await session.execute(select(Publication).where(Publication.slug == slug))
+    ).scalar_one_or_none()
+
+
+async def get_existing_canonical_ids(session: AsyncSession, canonical_ids: list[str]) -> set[str]:
+    """Which of these articles are already stored?"""
+    stmt = select(Article.canonical_id).where(Article.canonical_id.in_(canonical_ids))
+    return set((await session.execute(stmt)).scalars())
+
+
+async def list_publications(session: AsyncSession) -> list[Publication]:
+    return list((await session.execute(select(Publication))).scalars())
+
+
+async def upsert_article(
+    session: AsyncSession,
+    *,
+    canonical_id: str,
+    publication_id: uuid.UUID,
+    url: str,
+    title: str,
+    author: str | None,
+    published_at: datetime,
+    content_hash: str,
+    text: str,
+) -> uuid.UUID:
+    """Upsert by `canonical_id` — the dedupe key across every ingestion path."""
+    stmt = (
+        insert(Article)
+        .values(
+            id=uuid.uuid4(),
+            canonical_id=canonical_id,
+            publication_id=publication_id,
+            url=url,
+            title=title,
+            author=author,
+            published_at=published_at,
+            content_hash=content_hash,
+            text=text,
+        )
+        .on_conflict_do_update(
+            index_elements=[Article.canonical_id],
+            set_={
+                "title": title,
+                "author": author,
+                "published_at": published_at,
+                "content_hash": content_hash,
+                "text": text,
+                "updated_at": func.now(),
+            },
+        )
+        .returning(Article.id)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def replace_passages(
+    session: AsyncSession,
+    *,
+    article_id: uuid.UUID,
+    passages: list[dict[str, object]],
+) -> int:
+    """Upsert by `(article_id, chunk_index)` — re-running produces zero new rows.
+
+    `tsv` is a generated column (see the migration) and is never written here.
+    """
+    if not passages:
+        return 0
+    stmt = insert(Passage).values(
+        [
+            {
+                "id": uuid.uuid4(),
+                "article_id": article_id,
+                "chunk_index": p["chunk_index"],
+                "text": p["text"],
+                "embedding": p["embedding"],
+            }
+            for p in passages
+        ]
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[Passage.article_id, Passage.chunk_index],
+        index_where=Passage.valid_to.is_(None),
+        set_={"text": stmt.excluded.text, "embedding": stmt.excluded.embedding},
+    )
+    await session.execute(stmt)
+    return len(passages)
+
+
+async def create_job(
+    session: AsyncSession,
+    *,
+    event_id: str,
+    kind: str,
+    total: int,
+    publication_id: uuid.UUID | None = None,
+) -> None:
+    stmt = (
+        insert(Job)
+        .values(
+            event_id=event_id,
+            kind=kind,
+            status="running",
+            total=total,
+            done=0,
+            publication_id=publication_id,
+        )
+        .on_conflict_do_nothing(index_elements=[Job.event_id])
+    )
+    await session.execute(stmt)
+
+
+async def get_job(session: AsyncSession, event_id: str) -> Job | None:
+    return (await session.execute(select(Job).where(Job.event_id == event_id))).scalar_one_or_none()
+
+
+async def get_job_status(session: AsyncSession, event_id: str) -> dict[str, object] | None:
+    """`done` is resolved from real article rows, not incremented by ingest-article
+    (which never learns which discovery job triggered it — see the Job model's
+    `publication_id` comment). Read-repairs `jobs.done` in the same query.
+
+    Only articles written since the job started count towards it: a backfill of a
+    publication that already has articles must not look finished before it starts.
+    """
+    job = await get_job(session, event_id)
+    if job is None:
+        return None
+    done = (
+        job.total
+        if job.publication_id is None
+        else min(
+            await count_articles_for_publication_since(session, job.publication_id, job.created_at),
+            job.total,
+        )
+    )
+    done = max(done, job.done)
+    if done != job.done:
+        job.done = done
+    if done >= job.total and job.status != "completed":
+        job.status = "completed"
+    return {
+        "event_id": job.event_id,
+        "kind": job.kind,
+        "status": job.status,
+        "total": job.total,
+        "done": job.done,
+    }
+
+
+async def count_articles(session: AsyncSession) -> int:
+    return (await session.execute(select(func.count()).select_from(Article))).scalar_one()
+
+
+async def count_passages(session: AsyncSession) -> int:
+    return (await session.execute(select(func.count()).select_from(Passage))).scalar_one()
+
+
+async def count_articles_for_publication(session: AsyncSession, publication_id: uuid.UUID) -> int:
+    stmt = select(func.count()).select_from(Article).where(Article.publication_id == publication_id)
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def count_articles_for_publication_since(
+    session: AsyncSession, publication_id: uuid.UUID, since: datetime
+) -> int:
+    """Articles of a publication created or updated at or after `since`."""
+    stmt = (
+        select(func.count())
+        .select_from(Article)
+        .where(Article.publication_id == publication_id, Article.updated_at >= since)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def insert_cost(
+    session: AsyncSession,
+    *,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    est_usd: float,
+    article_id: uuid.UUID | None = None,
+) -> None:
+    session.add(
+        Cost(
+            id=uuid.uuid4(),
+            article_id=article_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            est_usd=est_usd,
+        )
+    )
+
+
+async def search_passages_bm25(
+    session: AsyncSession, query: str, limit: int
+) -> list[dict[str, object]]:
+    """BM25 (tsvector) search, no LLM. Sparse half of retrieval preview
+    (`kb/retrieval/sparse.py`); fused with the dense half on.
+    """
+    tsquery = func.websearch_to_tsquery("english", query)
+    rank = func.ts_rank(Passage.tsv, tsquery)
+    stmt = (
+        select(
+            Passage.id,
+            Passage.text,
+            Article.title,
+            Article.author,
+            Article.url,
+            Article.published_at,
+            rank.label("rank"),
+        )
+        .join(Article, Article.id == Passage.article_id)
+        .where(Passage.tsv.op("@@")(tsquery), Passage.valid_to.is_(None))
+        .order_by(rank.desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "passage_id": str(row.id),
+            "text": row.text,
+            "title": row.title,
+            "author": row.author,
+            "url": row.url,
+            "published_at": row.published_at.isoformat(),
+            "rank": float(row.rank),
+        }
+        for row in rows
+    ]
+
+
+async def search_passages_dense(
+    session: AsyncSession, query_embedding: list[float], limit: int
+) -> list[dict[str, object]]:
+    """Cosine-similarity search over `passages.embedding` (pgvector), no LLM.
+    Dense half of retrieval preview (`kb/retrieval/dense.py`); fused
+    with the sparse half on.
+    """
+    distance = Passage.embedding.cosine_distance(query_embedding)
+    stmt = (
+        select(
+            Passage.id,
+            Passage.text,
+            Article.title,
+            Article.author,
+            Article.url,
+            Article.published_at,
+            distance.label("distance"),
+        )
+        .join(Article, Article.id == Passage.article_id)
+        .where(Passage.valid_to.is_(None), Passage.embedding.is_not(None))
+        .order_by(distance.asc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "passage_id": str(row.id),
+            "text": row.text,
+            "title": row.title,
+            "author": row.author,
+            "url": row.url,
+            "published_at": row.published_at.isoformat(),
+            # Cosine similarity, not distance — higher is more relevant, consistent
+            # with search_passages_bm25's `rank` so callers don't special-case sign.
+            "rank": 1.0 - float(row.distance),
+        }
+        for row in rows
+    ]
+
+
+async def save_snapshot(
+    session: AsyncSession,
+    *,
+    snapshot_id: str,
+    question: str,
+    answer_text: str,
+    citations: list[dict[str, object]],
+    retrieved: list[dict[str, object]],
+    retriever_variant: str,
+    as_of: datetime | None,
+    latency_ms: int,
+) -> None:
+    session.add(
+        Snapshot(
+            snapshot_id=snapshot_id,
+            question=question,
+            answer_text=answer_text,
+            citations=citations,
+            retrieved=retrieved,
+            retriever_variant=retriever_variant,
+            as_of=as_of,
+            latency_ms=latency_ms,
+        )
+    )
+
+
+async def get_snapshot(session: AsyncSession, snapshot_id: str) -> Snapshot | None:
+    stmt = select(Snapshot).where(Snapshot.snapshot_id == snapshot_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_article_by_canonical_id(session: AsyncSession, canonical_id: str) -> Article | None:
+    stmt = select(Article).where(Article.canonical_id == canonical_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def supersede_passages(session: AsyncSession, article_id: uuid.UUID) -> int:
+    """Close active passages by setting valid_to = now(). History is preserved."""
+    stmt = (
+        update(Passage)
+        .where(Passage.article_id == article_id, Passage.valid_to.is_(None))
+        .values(valid_to=func.now())
+    )
+    result = await session.execute(stmt)
+    return getattr(result, "rowcount", 0)
+
+
+async def insert_passages_fresh(
+    session: AsyncSession,
+    *,
+    article_id: uuid.UUID,
+    passages: list[dict[str, object]],
+) -> int:
+    """Insert new passage versions without conflicting on previously superseded rows."""
+    if not passages:
+        return 0
+    stmt = insert(Passage).values(
+        [
+            {
+                "id": uuid.uuid4(),
+                "article_id": article_id,
+                "chunk_index": p["chunk_index"],
+                "text": p["text"],
+                "embedding": p["embedding"],
+            }
+            for p in passages
+        ]
+    )
+    await session.execute(stmt)
+    return len(passages)
+
+
+async def get_cursor(session: AsyncSession, publication_id: uuid.UUID) -> Cursor | None:
+    stmt = select(Cursor).where(Cursor.publication_id == publication_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def update_cursor(
+    session: AsyncSession,
+    *,
+    publication_id: uuid.UUID,
+    etag: str | None,
+    last_modified: str | None,
+    not_modified: bool = False,
+) -> None:
+    """Update or insert publication polling cursor with conditional response metadata."""
+    existing = await get_cursor(session, publication_id)
+    if existing is None:
+        cursor = Cursor(
+            publication_id=publication_id,
+            etag=etag,
+            last_modified=last_modified,
+            last_checked_at=datetime.now(),
+            poll_count=1,
+            not_modified_count=1 if not_modified else 0,
+        )
+        session.add(cursor)
+    else:
+        existing.poll_count += 1
+        if not_modified:
+            existing.not_modified_count += 1
+        else:
+            if etag:
+                existing.etag = etag
+            if last_modified:
+                existing.last_modified = last_modified
+        existing.last_checked_at = datetime.now()
+
+
+async def record_failure(
+    session: AsyncSession,
+    *,
+    function_id: str,
+    run_id: str,
+    error: str,
+    event_data: dict[str, object] | None = None,
+) -> uuid.UUID:
+    failure = Failure(
+        id=uuid.uuid4(),
+        function_id=function_id,
+        run_id=run_id,
+        error=error,
+        event_data=event_data,
+    )
+    session.add(failure)
+    await session.flush()
+    return failure.id
+
+
+async def list_publications_with_stats(session: AsyncSession) -> list[dict[str, object]]:
+    """List publications alongside article counts and cursor sync info."""
+    pubs = await list_publications(session)
+    results = []
+    for pub in pubs:
+        art_count = await count_articles_for_publication(session, pub.id)
+        cursor = await get_cursor(session, pub.id)
+        last_checked = (
+            cursor.last_checked_at.isoformat() if cursor and cursor.last_checked_at else None
+        )
+        results.append(
+            {
+                "id": str(pub.id),
+                "slug": pub.slug,
+                "name": pub.name,
+                "feed_url": pub.feed_url,
+                "homepage": pub.homepage,
+                "active": pub.active,
+                "article_count": art_count,
+                "last_checked_at": last_checked,
+                "poll_count": cursor.poll_count if cursor else 0,
+                "not_modified_count": cursor.not_modified_count if cursor else 0,
+            }
+        )
+    return results
+
+
+async def get_article_with_publication(
+    session: AsyncSession, article_id: uuid.UUID
+) -> tuple[Article, Publication] | None:
+    """Fetch an Article alongside its parent Publication."""
+    stmt = (
+        select(Article, Publication)
+        .join(Publication, Publication.id == Article.publication_id)
+        .where(Article.id == article_id)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        return None
+    return row[0], row[1]
+
+
+async def count_active_claims(session: AsyncSession) -> int:
+    """Count active claims (`valid_to IS NULL`) in Postgres."""
+    stmt = select(func.count()).select_from(Claim).where(Claim.valid_to.is_(None))
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_active_claims_for_article(
+    session: AsyncSession, article_id: uuid.UUID
+) -> list[Claim]:
+    """Return all currently active claims for an article."""
+    stmt = select(Claim).where(Claim.article_id == article_id, Claim.valid_to.is_(None))
+    return list((await session.execute(stmt)).scalars())
+
+
+async def persist_article_claims(
+    session: AsyncSession,
+    *,
+    article_id: uuid.UUID,
+    claims: list[dict[str, object]],
+    now: datetime,
+) -> list[dict[str, str]]:
+    """Supersede stale active claims for `article_id` and upsert the newly validated
+    claims. Returns `supersedes_pairs` (`[{new_claim_id, old_claim_id, at}]`) so
+    Memgraph can merge `[:SUPERSEDES]` edges for topic-overlapping revisions.
+    """
+    existing_active = await get_active_claims_for_article(session, article_id)
+    incoming_ids = {uuid.UUID(str(c["claim_id"])) for c in claims}
+
+    # Any active claim not in the new batch belongs to a prior revision and is superseded
+    stale_claims = [old for old in existing_active if old.id not in incoming_ids]
+    if stale_claims:
+        stale_ids = [old.id for old in stale_claims]
+        await session.execute(
+            update(Claim).where(Claim.id.in_(stale_ids)).values(valid_to=now)
+        )
+
+    # Map topic slug -> most recent superseded claim id so new claims on the same
+    # topic can link via supersedes_id / [:SUPERSEDES]
+    topic_to_old_claim_id: dict[str, uuid.UUID] = {}
+    for old in stale_claims:
+        for ent in old.entities or []:
+            if isinstance(ent, dict) and ent.get("slug"):
+                topic_to_old_claim_id[str(ent["slug"])] = old.id
+
+    supersedes_pairs: list[dict[str, str]] = []
+    now_iso = now.isoformat()
+
+    for c in claims:
+        cid = uuid.UUID(str(c["claim_id"]))
+        topics_list = c.get("topics", [])
+        entities_json: list[dict[str, str]] = (
+            [
+                {"slug": str(t["slug"]), "name": str(t["name"])}
+                for t in topics_list
+                if isinstance(t, dict) and "slug" in t and "name" in t
+            ]
+            if isinstance(topics_list, list)
+            else []
+        )
+
+        supersedes_uuid: uuid.UUID | None = None
+        for ent in entities_json:
+            old_id = topic_to_old_claim_id.get(ent["slug"])
+            if old_id is not None and old_id != cid:
+                supersedes_uuid = old_id
+                supersedes_pairs.append(
+                    {
+                        "new_claim_id": str(cid),
+                        "old_claim_id": str(old_id),
+                        "at": now_iso,
+                    }
+                )
+                break
+
+        stmt = (
+            insert(Claim)
+            .values(
+                id=cid,
+                article_id=article_id,
+                text=str(c["text"]),
+                quote_span=str(c["quote_span"]),
+                claim_type=str(c["claim_type"]),
+                entities=entities_json,
+                confidence=float(str(c.get("confidence", 0.9))),
+                valid_from=now,
+                valid_to=None,
+                supersedes_id=supersedes_uuid,
+            )
+            .on_conflict_do_update(
+                index_elements=[Claim.id],
+                set_={
+                    "text": str(c["text"]),
+                    "quote_span": str(c["quote_span"]),
+                    "claim_type": str(c["claim_type"]),
+                    "entities": entities_json,
+                    "confidence": float(str(c.get("confidence", 0.9))),
+                    "valid_to": None,
+                    "supersedes_id": supersedes_uuid,
+                },
+            )
+        )
+        await session.execute(stmt)
+
+    return supersedes_pairs
+
+
+async def find_matching_passage_for_quote(
+    session: AsyncSession,
+    *,
+    article_id: uuid.UUID,
+    quote_span: str,
+) -> dict[str, object] | None:
+    """Resolve an active Postgres passage from `article_id` containing `quote_span`
+    (falling back to the first active passage of the article if the quote spans a
+    chunk boundary).
+    """
+    stmt = (
+        select(
+            Passage.id,
+            Passage.text,
+            Passage.chunk_index,
+            Article.title,
+            Article.author,
+            Article.url,
+            Article.published_at,
+        )
+        .join(Article, Article.id == Passage.article_id)
+        .where(Passage.article_id == article_id, Passage.valid_to.is_(None))
+        .order_by(Passage.chunk_index.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return None
+
+    norm_quote = " ".join(quote_span.split()).strip().lower()
+    probe = norm_quote[:60] if len(norm_quote) > 60 else norm_quote
+
+    chosen = rows[0]
+    for row in rows:
+        norm_passage = " ".join(str(row.text).split()).strip().lower()
+        if norm_quote in norm_passage or (probe and probe in norm_passage):
+            chosen = row
+            break
+
+    return {
+        "passage_id": str(chosen.id),
+        "text": chosen.text,
+        "title": chosen.title,
+        "author": chosen.author,
+        "url": chosen.url,
+        "published_at": chosen.published_at.isoformat(),
+    }
+
+
+async def get_source_provenance(
+    session: AsyncSession, target_id: uuid.UUID
+) -> dict[str, object] | None:
+    """Look up full lineage for a `claim_id` or `passage_id` for `kb_sources`."""
+    claim_stmt = (
+        select(Claim, Article, Publication)
+        .join(Article, Article.id == Claim.article_id)
+        .join(Publication, Publication.id == Article.publication_id)
+        .where(Claim.id == target_id)
+    )
+    claim_row = (await session.execute(claim_stmt)).first()
+    if claim_row is not None:
+        claim, article, pub = claim_row
+        return {
+            "kind": "claim",
+            "id": str(claim.id),
+            "article": {
+                "article_id": str(article.id),
+                "canonical_id": article.canonical_id,
+                "title": article.title,
+                "url": article.url,
+                "published_at": article.published_at.isoformat(),
+                "content_hash": article.content_hash,
+            },
+            "publication": {
+                "slug": pub.slug,
+                "name": pub.name,
+                "homepage": pub.homepage,
+            },
+            "author": article.author or "Unknown Author",
+            "verbatim_quote": claim.quote_span,
+            "claim_text": claim.text,
+            "claim_type": claim.claim_type,
+            "confidence": float(claim.confidence),
+            "topics": list(claim.entities or []),
+            "validity": {
+                "valid_from": claim.valid_from.isoformat(),
+                "valid_to": claim.valid_to.isoformat() if claim.valid_to else None,
+                "is_active": claim.valid_to is None,
+                "supersedes_id": str(claim.supersedes_id) if claim.supersedes_id else None,
+            },
+        }
+
+    passage_stmt = (
+        select(Passage, Article, Publication)
+        .join(Article, Article.id == Passage.article_id)
+        .join(Publication, Publication.id == Article.publication_id)
+        .where(Passage.id == target_id)
+    )
+    passage_row = (await session.execute(passage_stmt)).first()
+    if passage_row is not None:
+        passage, article, pub = passage_row
+        return {
+            "kind": "passage",
+            "id": str(passage.id),
+            "chunk_index": passage.chunk_index,
+            "article": {
+                "article_id": str(article.id),
+                "canonical_id": article.canonical_id,
+                "title": article.title,
+                "url": article.url,
+                "published_at": article.published_at.isoformat(),
+                "content_hash": article.content_hash,
+            },
+            "publication": {
+                "slug": pub.slug,
+                "name": pub.name,
+                "homepage": pub.homepage,
+            },
+            "author": article.author or "Unknown Author",
+            "verbatim_quote": passage.text,
+            "validity": {
+                "valid_from": passage.valid_from.isoformat(),
+                "valid_to": passage.valid_to.isoformat() if passage.valid_to else None,
+                "is_active": passage.valid_to is None,
+                "supersedes_id": None,
+            },
+        }
+
+    return None
+
+
+async def upsert_eval_result(
+    session: AsyncSession,
+    *,
+    snapshot_id: str,
+    deterministic_passed: bool,
+    checks: dict[str, bool],
+    faithfulness_verdict: str,
+    faithfulness_critique: str,
+    disagreement_verdict: str,
+    disagreement_critique: str,
+    failure_codes: list[str],
+    composite_score: float,
+) -> uuid.UUID:
+    """Upsert an `EvalResult` row for `snapshot_id` and update `snapshots.confidence`."""
+    stmt = (
+        insert(EvalResult)
+        .values(
+            id=uuid.uuid4(),
+            snapshot_id=snapshot_id,
+            deterministic_passed=deterministic_passed,
+            checks=checks,
+            faithfulness_verdict=faithfulness_verdict,
+            faithfulness_critique=faithfulness_critique,
+            disagreement_verdict=disagreement_verdict,
+            disagreement_critique=disagreement_critique,
+            failure_codes=failure_codes,
+            composite_score=composite_score,
+        )
+        .on_conflict_do_update(
+            index_elements=[EvalResult.snapshot_id],
+            set_={
+                "deterministic_passed": deterministic_passed,
+                "checks": checks,
+                "faithfulness_verdict": faithfulness_verdict,
+                "faithfulness_critique": faithfulness_critique,
+                "disagreement_verdict": disagreement_verdict,
+                "disagreement_critique": disagreement_critique,
+                "failure_codes": failure_codes,
+                "composite_score": composite_score,
+            },
+        )
+        .returning(EvalResult.id)
+    )
+    eval_id = (await session.execute(stmt)).scalar_one()
+
+    await session.execute(
+        update(Snapshot)
+        .where(Snapshot.snapshot_id == snapshot_id)
+        .values(confidence=composite_score)
+    )
+    return eval_id
+
+
+async def upsert_eval_run(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    suite_name: str,
+    variants_summary: dict[str, object],
+    case_results: list[dict[str, object]],
+) -> str:
+    """Upsert a benchmark or failure-replay suite execution in `eval_runs`."""
+    stmt = (
+        insert(EvalRun)
+        .values(
+            run_id=run_id,
+            suite_name=suite_name,
+            variants_summary=variants_summary,
+            case_results=case_results,
+        )
+        .on_conflict_do_update(
+            index_elements=[EvalRun.run_id],
+            set_={
+                "suite_name": suite_name,
+                "variants_summary": variants_summary,
+                "case_results": case_results,
+            },
+        )
+        .returning(EvalRun.run_id)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def list_recent_failures(
+    session: AsyncSession, limit: int = 20
+) -> list[dict[str, object]]:
+    """Return the most recent rows from the `failures` table for eval replay."""
+    stmt = select(Failure).order_by(Failure.created_at.desc()).limit(limit)
+    rows = list((await session.execute(stmt)).scalars())
+    return [
+        {
+            "id": str(f.id),
+            "function_id": f.function_id,
+            "run_id": f.run_id,
+            "error": f.error,
+            "event_data": f.event_data,
+            "created_at": f.created_at.isoformat(),
+        }
+        for f in rows
+    ]
+
+
+async def get_latest_eval_report(
+    session: AsyncSession, limit: int = 10
+) -> dict[str, object]:
+    """Assemble the fast-read evaluation report for `GET /evals/latest` and `kb_eval_report`."""
+    latest_run = (
+        await session.execute(select(EvalRun).order_by(EvalRun.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+
+    eval_rows = list(
+        (
+            await session.execute(
+                select(EvalResult).order_by(EvalResult.created_at.desc()).limit(limit)
+            )
+        ).scalars()
+    )
+
+    total_evaluated = (
+        await session.execute(select(func.count()).select_from(EvalResult))
+    ).scalar_one()
+
+    taxonomy_counts: dict[str, int] = {}
+    det_passes = 0
+    faith_passes = 0
+    recent_evaluations: list[dict[str, object]] = []
+
+    for row in eval_rows:
+        if row.deterministic_passed:
+            det_passes += 1
+        if row.faithfulness_verdict == "PASS":
+            faith_passes += 1
+        for code in row.failure_codes or []:
+            taxonomy_counts[str(code)] = taxonomy_counts.get(str(code), 0) + 1
+        recent_evaluations.append(
+            {
+                "snapshot_id": row.snapshot_id,
+                "composite_score": float(row.composite_score),
+                "deterministic_passed": row.deterministic_passed,
+                "faithfulness_verdict": row.faithfulness_verdict,
+                "faithfulness_critique": row.faithfulness_critique,
+                "disagreement_verdict": row.disagreement_verdict,
+                "failure_codes": list(row.failure_codes or []),
+                "created_at": row.created_at.isoformat(),
+            }
+        )
+
+    denom = max(len(eval_rows), 1)
+    return {
+        "total_evaluated_snapshots": total_evaluated,
+        "recent_deterministic_pass_rate": round(det_passes / denom, 4) if eval_rows else None,
+        "recent_faithfulness_pass_rate": round(faith_passes / denom, 4) if eval_rows else None,
+        "failure_taxonomy_counts": taxonomy_counts,
+        "recent_evaluations": recent_evaluations,
+        "latest_suite_run": (
+            {
+                "run_id": latest_run.run_id,
+                "suite_name": latest_run.suite_name,
+                "variants_summary": latest_run.variants_summary,
+                "created_at": latest_run.created_at.isoformat(),
+            }
+            if latest_run is not None
+            else None
+        ),
+    }
+
+
+async def upsert_research_run(
+    session: AsyncSession,
+    *,
+    research_id: str,
+    event_id: str | None,
+    question: str,
+    status: str,
+    plan: list[str],
+    hops: list[dict[str, object]],
+    report_text: str | None,
+    citations: list[dict[str, object]],
+    retrieved: list[dict[str, object]],
+    eval_summary: dict[str, object],
+    confidence: float | None,
+    iterations_used: int,
+    total_cost_usd: float,
+    latency_ms: int,
+    completed_at: datetime | None,
+) -> str:
+    """Upsert a bounded research agent execution in `research_runs`
+    (sole writer: `run-research-agent`).
+    """
+    stmt = (
+        insert(ResearchRun)
+        .values(
+            research_id=research_id,
+            event_id=event_id,
+            question=question,
+            status=status,
+            plan=plan,
+            hops=hops,
+            report_text=report_text,
+            citations=citations,
+            retrieved=retrieved,
+            eval_summary=eval_summary,
+            confidence=confidence,
+            iterations_used=iterations_used,
+            total_cost_usd=total_cost_usd,
+            latency_ms=latency_ms,
+            completed_at=completed_at,
+        )
+        .on_conflict_do_update(
+            index_elements=[ResearchRun.research_id],
+            set_={
+                "event_id": event_id,
+                "question": question,
+                "status": status,
+                "plan": plan,
+                "hops": hops,
+                "report_text": report_text,
+                "citations": citations,
+                "retrieved": retrieved,
+                "eval_summary": eval_summary,
+                "confidence": confidence,
+                "iterations_used": iterations_used,
+                "total_cost_usd": total_cost_usd,
+                "latency_ms": latency_ms,
+                "completed_at": completed_at,
+            },
+        )
+        .returning(ResearchRun.research_id)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_research_run(
+    session: AsyncSession, research_id: str
+) -> dict[str, object] | None:
+    """Fetch a single `ResearchRun` row by `research_id` for `GET /research/{id}`
+    and `kb_research_result`.
+    """
+    row = (
+        await session.execute(
+            select(ResearchRun).where(ResearchRun.research_id == research_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return {
+        "research_id": row.research_id,
+        "event_id": row.event_id,
+        "question": row.question,
+        "status": row.status,
+        "plan": list(row.plan or []),
+        "hops": list(row.hops or []),
+        "report": row.report_text,
+        "citations": list(row.citations or []),
+        "retrieved_count": len(row.retrieved or []),
+        "eval_summary": dict(row.eval_summary or {}),
+        "confidence": float(row.confidence) if row.confidence is not None else None,
+        "iterations_used": row.iterations_used,
+        "total_cost_usd": float(row.total_cost_usd),
+        "latency_ms": row.latency_ms,
+        "created_at": row.created_at.isoformat(),
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }
+
+
+async def collect_weekly_digest_inputs(
+    session: AsyncSession,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    publication_slugs: list[str] | None = None,
+) -> dict[str, object]:
+    """Gather articles, active claims, and cross-publication topic overlaps
+    for the digest window.
+    """
+    art_stmt = (
+        select(Article, Publication)
+        .join(Publication, Publication.id == Article.publication_id)
+        .where(Article.published_at >= window_start, Article.published_at <= window_end)
+        .order_by(Article.published_at.desc())
+    )
+    if publication_slugs:
+        art_stmt = art_stmt.where(Publication.slug.in_(publication_slugs))
+
+    art_rows = (await session.execute(art_stmt)).all()
+    if not art_rows:
+        # Fallback to most recent articles in the KB so local digests are rich even if
+        # RSS feeds haven't published in the last 7 wall-clock days.
+        fallback_stmt = (
+            select(Article, Publication)
+            .join(Publication, Publication.id == Article.publication_id)
+            .order_by(Article.published_at.desc())
+            .limit(15)
+        )
+        if publication_slugs:
+            fallback_stmt = fallback_stmt.where(Publication.slug.in_(publication_slugs))
+        art_rows = (await session.execute(fallback_stmt)).all()
+
+    article_ids = [art.id for art, _ in art_rows]
+    articles_payload: list[dict[str, object]] = [
+        {
+            "article_id": str(art.id),
+            "canonical_id": art.canonical_id,
+            "title": art.title,
+            "author": art.author or pub.name,
+            "url": art.url,
+            "publication_slug": pub.slug,
+            "publication_name": pub.name,
+            "published_at": art.published_at.isoformat(),
+        }
+        for art, pub in art_rows
+    ]
+
+    claims_payload: list[dict[str, object]] = []
+    topic_map: dict[str, dict[str, object]] = {}
+
+    if article_ids:
+        claim_stmt = (
+            select(Claim, Article, Publication)
+            .join(Article, Article.id == Claim.article_id)
+            .join(Publication, Publication.id == Article.publication_id)
+            .where(Claim.article_id.in_(article_ids), Claim.valid_to.is_(None))
+            .order_by(Claim.confidence.desc())
+        )
+        claim_rows = (await session.execute(claim_stmt)).all()
+
+        # Also fetch one passage per article so citations have valid passage_ids
+        pass_stmt = (
+            select(Passage)
+            .where(Passage.article_id.in_(article_ids), Passage.valid_to.is_(None))
+            .order_by(Passage.chunk_index.asc())
+        )
+        pass_rows = list((await session.execute(pass_stmt)).scalars())
+        first_passage_by_article: dict[uuid.UUID, Passage] = {}
+        for p in pass_rows:
+            if p.article_id not in first_passage_by_article:
+                first_passage_by_article[p.article_id] = p
+
+        for claim, art, pub in claim_rows:
+            matched_passage = first_passage_by_article.get(art.id)
+            passage_id_str = str(matched_passage.id) if matched_passage else str(claim.id)
+            item: dict[str, object] = {
+                "passage_id": passage_id_str,
+                "claim_id": str(claim.id),
+                "claim_text": claim.text,
+                "claim_type": claim.claim_type,
+                "text": claim.quote_span,
+                "title": art.title,
+                "author": art.author or pub.name,
+                "url": art.url,
+                "publication_slug": pub.slug,
+                "publication_name": pub.name,
+                "published_at": art.published_at.isoformat(),
+                "topics": list(claim.entities or []),
+            }
+            claims_payload.append(item)
+
+            for ent in claim.entities or []:
+                if not isinstance(ent, dict) or "slug" not in ent:
+                    continue
+                slug = str(ent["slug"])
+                name = str(ent.get("name", slug))
+                entry = topic_map.setdefault(
+                    slug,
+                    {
+                        "slug": slug,
+                        "name": name,
+                        "publications": set(),
+                        "authors": set(),
+                        "claims": [],
+                    },
+                )
+                pubs_set = entry["publications"]
+                if isinstance(pubs_set, set):
+                    pubs_set.add(pub.slug)
+                authors_set = entry["authors"]
+                if isinstance(authors_set, set):
+                    authors_set.add(art.author or pub.name)
+                claims_list = entry["claims"]
+                if isinstance(claims_list, list):
+                    claims_list.append(item)
+
+    shared_topics: list[dict[str, object]] = []
+    for slug, info in topic_map.items():
+        pubs = sorted(info["publications"]) if isinstance(info["publications"], set) else []
+        authors = sorted(info["authors"]) if isinstance(info["authors"], set) else []
+        t_claims = info["claims"] if isinstance(info["claims"], list) else []
+        shared_topics.append(
+            {
+                "slug": slug,
+                "name": info["name"],
+                "publications": pubs,
+                "authors": authors,
+                "claim_count": len(t_claims),
+                "is_cross_publication": len(pubs) >= 2,
+            }
+        )
+    shared_topics.sort(
+        key=lambda t: (
+            -int(bool(t["is_cross_publication"])),
+            -int(str(t["claim_count"])),
+            str(t["slug"]),
+        )
+    )
+
+    return {
+        "articles": articles_payload,
+        "claims": claims_payload,
+        "topics": shared_topics,
+    }
+
+
+async def insert_digest(
+    session: AsyncSession,
+    *,
+    digest_id: uuid.UUID,
+    window_start: datetime,
+    window_end: datetime,
+    title: str,
+    summary_markdown: str,
+    citations: list[dict[str, object]],
+    stats: dict[str, object],
+) -> uuid.UUID:
+    """Persist a weekly digest row in `digests` (sole writer: `generate-weekly-digest`)."""
+    stmt = (
+        insert(Digest)
+        .values(
+            digest_id=digest_id,
+            window_start=window_start,
+            window_end=window_end,
+            title=title,
+            summary_markdown=summary_markdown,
+            citations=citations,
+            stats=stats,
+        )
+        .on_conflict_do_update(
+            index_elements=[Digest.digest_id],
+            set_={
+                "window_start": window_start,
+                "window_end": window_end,
+                "title": title,
+                "summary_markdown": summary_markdown,
+                "citations": citations,
+                "stats": stats,
+            },
+        )
+        .returning(Digest.digest_id)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_latest_digest(session: AsyncSession) -> dict[str, object] | None:
+    """Return the most recent weekly digest from `digests`."""
+    row = (
+        await session.execute(select(Digest).order_by(Digest.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return {
+        "digest_id": str(row.digest_id),
+        "window_start": row.window_start.isoformat(),
+        "window_end": row.window_end.isoformat(),
+        "title": row.title,
+        "summary_markdown": row.summary_markdown,
+        "citations": list(row.citations or []),
+        "stats": dict(row.stats or {}),
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+
+
