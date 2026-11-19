@@ -1,0 +1,73 @@
+.PHONY: start stop logs reset nuke db-clear check lint test
+
+-include .env
+export
+
+COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
+REPO_DIR := $(shell pwd)
+LAB_PORT ?= 8000
+
+start:
+	@if [ "$(INNGEST_DEV)" = "0" ] || [ "$(INNGEST_DEV)" = "false" ] || [ "$(INNGEST_DEV)" = "False" ]; then \
+		echo "Starting in Inngest Cloud mode (INNGEST_DEV=$(INNGEST_DEV)) — skipping local inngest-dev container..."; \
+		$(COMPOSE) rm -sf inngest-dev >/dev/null 2>&1 || true; \
+		$(COMPOSE) up -d postgres adminer memgraph memgraph-lab; \
+	else \
+		echo "Starting in Local Inngest Dev Server mode (http://localhost:8288)..."; \
+		$(COMPOSE) up -d; \
+	fi
+	@echo "Waiting for postgres to report healthy..."
+	@until [ "$$($(COMPOSE) ps -q postgres | xargs docker inspect -f '{{.State.Health.Status}}')" = "healthy" ]; do \
+		sleep 1; \
+	done
+	@echo "Waiting for memgraph to report healthy..."
+	@until [ "$$($(COMPOSE) ps -q memgraph | xargs docker inspect -f '{{.State.Health.Status}}')" = "healthy" ]; do \
+		sleep 1; \
+	done
+	uv run python -m alembic upgrade head
+	uv run python -m uvicorn kb.main:app --reload --port $(LAB_PORT)
+
+stop:
+	$(COMPOSE) down
+
+logs:
+	$(COMPOSE) logs -f
+
+# Destructive: drops the named volumes.
+reset:
+	$(COMPOSE) down -v
+
+# More destructive than `reset`: also kills any stray app process left
+# holding $(LAB_PORT). uvicorn --reload's actual worker process can survive
+# a plain `pkill -f uvicorn` and can even lose the "kb.main:app"
+# string entirely once Python's multiprocessing re-execs it as a generic
+# "spawn_main(...)" bootstrap — so this matches on the repo's own path
+# (present in the worker's venv interpreter path either way) instead of any
+# command-line string, and only ever targets processes rooted under this
+# checkout. Use this when start/reset leave things in a weird state, not
+# for routine teardown (use `reset`).
+nuke:
+	$(COMPOSE) down -v --remove-orphans
+	@for pid in $$(lsof -ti:$(LAB_PORT) 2>/dev/null); do \
+		if ps -p "$$pid" -o command= 2>/dev/null | grep -qF "$(REPO_DIR)"; then \
+			echo "Killing stray process on :$(LAB_PORT) rooted in this repo: $$pid"; \
+			kill -9 "$$pid"; \
+		fi; \
+	done
+
+# Destructive: deletes every row from every app table (not the schema —
+# migrations stay applied) and empties Memgraph, without tearing down the
+# containers. Faster than `reset` when you just want a clean corpus mid-session.
+db-clear:
+	$(COMPOSE) exec -T postgres psql -U "$${POSTGRES_USER:-second_brain}" -d "$${POSTGRES_DB:-second_brain}" -c \
+		"DO \$$\$$ DECLARE r RECORD; BEGIN FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'alembic_version') LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE'; END LOOP; END \$$\$$;"
+	$(COMPOSE) exec -T memgraph sh -c "echo 'MATCH (n) DETACH DELETE n;' | mgconsole" || true
+
+lint:
+	uv run python -m ruff check .
+	uv run python -m mypy
+
+test:
+	uv run python -m pytest
+
+check: lint test

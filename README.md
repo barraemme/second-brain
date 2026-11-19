@@ -20,7 +20,7 @@
 
 **The Second Brain**, a knowledge base that turns technical newsletters into something your AI tools can query. It reads the articles, keeps itself fresh, understands who said what, and answers with citations. All of it runs on [Inngest](https://www.inngest.com/long-run), the durable orchestration engine that makes it survive real-world failures.
 
-By the end of this course, you'll have a system capable of:
+You'll have a system capable of:
 
 - Ingesting newsletters straight from their RSS feeds, safely, from an allowlist
 - Running every pipeline as **durable [Inngest](https://www.inngest.com/long-run) steps** that survive crashes, retries and rate limits
