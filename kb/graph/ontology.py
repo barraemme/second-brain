@@ -17,9 +17,7 @@ from pydantic import BaseModel, Field
 
 from kb.schemas.entities import ClaimType, ExtractedTopic
 
-NODE_LABELS: frozenset[str] = frozenset(
-    {"Publication", "Author", "Article", "Claim", "Topic"}
-)
+NODE_LABELS: frozenset[str] = frozenset({"Publication", "Author", "Article", "Claim", "Topic"})
 
 EDGE_TYPES: frozenset[str] = frozenset(
     {"PUBLISHED_IN", "WRITTEN_BY", "ASSERTS", "ABOUT", "SUPERSEDES"}

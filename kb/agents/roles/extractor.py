@@ -48,9 +48,7 @@ def heuristic_extract_claims(
     so the downstream quote-span guardrail still validates real substrings.
     """
     sentences = [
-        s.strip()
-        for s in re.split(r"(?<=[.!?])\s+", article_text)
-        if len(s.strip()) >= 25
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", article_text) if len(s.strip()) >= 25
     ]
     extracted: list[RawExtractedClaim] = []
 
@@ -84,4 +82,3 @@ def heuristic_extract_claims(
             break
 
     return ClaimExtractionBatch(claims=extracted)
-

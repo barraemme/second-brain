@@ -175,9 +175,7 @@ async def sync_article_claims_to_graph(
             "now": now_iso,
         },
     )
-    superseded_count = (
-        int(superseded_rows[0].get("superseded_count", 0)) if superseded_rows else 0
-    )
+    superseded_count = int(superseded_rows[0].get("superseded_count", 0)) if superseded_rows else 0
 
     synced_claims = 0
     if claims:
@@ -189,9 +187,7 @@ async def sync_article_claims_to_graph(
             },
         )
         synced_claims = (
-            int(batch_rows[0].get("synced_claims", len(claims)))
-            if batch_rows
-            else len(claims)
+            int(batch_rows[0].get("synced_claims", len(claims))) if batch_rows else len(claims)
         )
 
     supersedes_edges = 0

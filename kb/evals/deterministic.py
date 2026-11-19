@@ -69,9 +69,7 @@ def run_deterministic_checks(
     inline_indices = extract_inline_citation_indices(answer_text)
     max_valid_idx = min(len(retrieved), prompt_limit)
     citation_idx_map = {
-        int(c["citation_idx"]): c
-        for c in citations
-        if isinstance(c, dict) and "citation_idx" in c
+        int(c["citation_idx"]): c for c in citations if isinstance(c, dict) and "citation_idx" in c
     }
 
     # Check 1: citation_bounds_valid (FM-1)
@@ -85,13 +83,9 @@ def run_deterministic_checks(
 
     # Check 2: citations_subset_of_retrieved (FM-1)
     retrieved_by_pid = {
-        str(r["passage_id"]): r
-        for r in retrieved
-        if isinstance(r, dict) and "passage_id" in r
+        str(r["passage_id"]): r for r in retrieved if isinstance(r, dict) and "passage_id" in r
     }
-    subset_ok = all(
-        str(c.get("passage_id", "")) in retrieved_by_pid for c in citations
-    )
+    subset_ok = all(str(c.get("passage_id", "")) in retrieved_by_pid for c in citations)
 
     # Check 3: no_superseded_sources_cited (FM-2)
     freshness_ok = True

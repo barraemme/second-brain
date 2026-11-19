@@ -183,4 +183,3 @@ async def generate_weekly_digest(ctx: inngest.Context) -> dict[str, object]:
     )
 
     return persisted
-

@@ -173,7 +173,7 @@ async def search_graph_claims(
             results.append(
                 {
                     "passage_id": claim_id_str,
-                    "text": f"{claim_text} — \"{quote_span}\"",
+                    "text": f'{claim_text} — "{quote_span}"',
                     "title": str(row.get("title", "Unknown")),
                     "author": row.get("author"),
                     "url": str(row.get("url", "")),
@@ -188,4 +188,3 @@ async def search_graph_claims(
             )
 
     return results
-

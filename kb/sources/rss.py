@@ -53,7 +53,6 @@ async def fetch_feed_conditional(
         return response.status_code, response.content, resp_etag, resp_last_modified
 
 
-
 def parse_feed(raw: bytes) -> list[FeedEntry]:
     """Fail clearly if the feed does not parse at all."""
     parsed = feedparser.parse(raw)

@@ -72,4 +72,3 @@ def claim_id(
     norm_claim = " ".join(claim_text.split()).strip().lower()
     seed = f"{article_id}:{content_hash}:{norm_quote}:{norm_claim}"
     return uuid.uuid5(ARTICLE_CLAIM_NAMESPACE, seed)
-

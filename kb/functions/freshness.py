@@ -40,6 +40,7 @@ async def poll_feeds(ctx: inngest.Context) -> dict[str, object]:
     results: list[dict[str, object]] = []
 
     for pub_meta in pubs:
+
         async def _poll_one(
             meta: object = pub_meta,
             slug: str = pub_meta.slug,

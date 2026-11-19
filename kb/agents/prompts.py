@@ -152,6 +152,3 @@ WEEKLY_DIGEST_SYSTEM_PROMPT = (
     "4. Respect epistemic types ('measurement', 'opinion', 'prediction') and never "
     "invent citations outside the numbered context list."
 )
-
-
-

@@ -137,6 +137,3 @@ class DigestPublished(BaseModel):
     article_count: int
     claim_count: int
     disagreements_count: int
-
-
-

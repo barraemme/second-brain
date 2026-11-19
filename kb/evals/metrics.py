@@ -229,9 +229,7 @@ def rank_fixture_corpus_by_variant(
     """
     q_tokens = _tokenize_query(question)
     # Exact code identifiers (backticked or containing underscores/dots/hyphens)
-    exact_identifiers = {
-        m.lower() for m in re.findall(r"`([^`]+)`", question)
-    }
+    exact_identifiers = {m.lower() for m in re.findall(r"`([^`]+)`", question)}
 
     # 1. Sparse BM25 ranking
     sparse_scored: list[tuple[float, dict[str, Any]]] = []
@@ -340,9 +338,7 @@ def run_benchmark_variants(benchmark_path: str | Path | None = None) -> dict[str
         variants_summary[variant] = {
             "recall_at_5": round(sum(recalls) / max(len(recalls), 1), 4),
             "mrr": round(sum(mrrs) / max(len(mrrs), 1), 4),
-            "cross_pub_coverage": round(
-                sum(cross_pub_hits) / max(len(cross_pub_hits), 1), 4
-            ),
+            "cross_pub_coverage": round(sum(cross_pub_hits) / max(len(cross_pub_hits), 1), 4),
             "deterministic_pass_rate": 1.0,
             "faithfulness_pass_rate": 0.95 if "hybrid" in variant else 0.90,
         }

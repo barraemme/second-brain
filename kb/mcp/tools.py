@@ -123,15 +123,12 @@ async def kb_ask(
         return await ask_question(session, question=question)
 
 
-
 async def kb_backfill(
     publication: typing.Annotated[
         str,
         Field(
             default="all",
-            description=(
-                "Publication slug, feed URL, or 'all' to backfill all publications"
-            ),
+            description=("Publication slug, feed URL, or 'all' to backfill all publications"),
         ),
     ] = "all",
 ) -> dict[str, object]:
@@ -284,9 +281,7 @@ async def kb_sources(
     try:
         target_uuid = uuid.UUID(claim_or_passage_id.strip())
     except ValueError as exc:
-        raise ToolError(
-            f"Invalid UUID for claim_or_passage_id={claim_or_passage_id!r}."
-        ) from exc
+        raise ToolError(f"Invalid UUID for claim_or_passage_id={claim_or_passage_id!r}.") from exc
 
     async with get_session() as session:
         provenance = await get_source_provenance(session, target_uuid)
@@ -409,6 +404,3 @@ async def kb_weekly_digest() -> dict[str, object]:
             "message": "No weekly digest has been generated yet. Trigger POST /digests/run first.",
         }
     return digest
-
-
-

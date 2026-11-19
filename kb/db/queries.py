@@ -521,9 +521,7 @@ async def persist_article_claims(
     stale_claims = [old for old in existing_active if old.id not in incoming_ids]
     if stale_claims:
         stale_ids = [old.id for old in stale_claims]
-        await session.execute(
-            update(Claim).where(Claim.id.in_(stale_ids)).values(valid_to=now)
-        )
+        await session.execute(update(Claim).where(Claim.id.in_(stale_ids)).values(valid_to=now))
 
     # Map topic slug -> most recent superseded claim id so new claims on the same
     # topic can link via supersedes_id / [:SUPERSEDES]
@@ -808,9 +806,7 @@ async def upsert_eval_run(
     return (await session.execute(stmt)).scalar_one()
 
 
-async def list_recent_failures(
-    session: AsyncSession, limit: int = 20
-) -> list[dict[str, object]]:
+async def list_recent_failures(session: AsyncSession, limit: int = 20) -> list[dict[str, object]]:
     """Return the most recent rows from the `failures` table for eval replay."""
     stmt = select(Failure).order_by(Failure.created_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
@@ -827,9 +823,7 @@ async def list_recent_failures(
     ]
 
 
-async def get_latest_eval_report(
-    session: AsyncSession, limit: int = 10
-) -> dict[str, object]:
+async def get_latest_eval_report(session: AsyncSession, limit: int = 10) -> dict[str, object]:
     """Assemble the fast-read evaluation report for `GET /evals/latest` and `kb_eval_report`."""
     latest_run = (
         await session.execute(select(EvalRun).order_by(EvalRun.created_at.desc()).limit(1))
@@ -957,16 +951,12 @@ async def upsert_research_run(
     return (await session.execute(stmt)).scalar_one()
 
 
-async def get_research_run(
-    session: AsyncSession, research_id: str
-) -> dict[str, object] | None:
+async def get_research_run(session: AsyncSession, research_id: str) -> dict[str, object] | None:
     """Fetch a single `ResearchRun` row by `research_id` for `GET /research/{id}`
     and `kb_research_result`.
     """
     row = (
-        await session.execute(
-            select(ResearchRun).where(ResearchRun.research_id == research_id)
-        )
+        await session.execute(select(ResearchRun).where(ResearchRun.research_id == research_id))
     ).scalar_one_or_none()
     if row is None:
         return None
@@ -1193,7 +1183,3 @@ async def get_latest_digest(session: AsyncSession) -> dict[str, object] | None:
         "stats": dict(row.stats or {}),
         "created_at": row.created_at.isoformat(),
     }
-
-
-
-

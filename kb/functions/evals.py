@@ -182,8 +182,7 @@ async def evaluate_answer(ctx: inngest.Context) -> dict[str, object]:
             return {
                 "verdict": "NOT_APPLICABLE",
                 "critique": (
-                    "Single author/publication in retrieved context; "
-                    "disagreement check skipped."
+                    "Single author/publication in retrieved context; disagreement check skipped."
                 ),
             }
 
@@ -229,9 +228,7 @@ async def evaluate_answer(ctx: inngest.Context) -> dict[str, object]:
             disagreement_verdict=disagreement_verdict,
             failure_codes=failure_codes,
         )
-        await client.send(
-            inngest.Event(name=ANSWER_EVALUATED, data=evt.model_dump(mode="json"))
-        )
+        await client.send(inngest.Event(name=ANSWER_EVALUATED, data=evt.model_dump(mode="json")))
         return {"event_sent": True}
 
     await ctx.step.run("emit-answer-evaluated", _emit_evaluated)
@@ -335,9 +332,7 @@ async def run_eval_suite(ctx: inngest.Context) -> dict[str, object]:
             summary = {
                 "recall_at_5": round(sum(recalls) / max(len(recalls), 1), 4),
                 "mrr": round(sum(mrrs) / max(len(mrrs), 1), 4),
-                "cross_pub_coverage": round(
-                    sum(cross_pub_hits) / max(len(cross_pub_hits), 1), 4
-                ),
+                "cross_pub_coverage": round(sum(cross_pub_hits) / max(len(cross_pub_hits), 1), 4),
                 "deterministic_pass_rate": 1.0,
                 "faithfulness_pass_rate": 0.97 if v_name == "hybrid_3way_rrf_k60" else 0.92,
             }

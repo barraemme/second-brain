@@ -136,9 +136,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
         max(payload.max_iterations or settings.research_max_iterations, 1),
         5,
     )
-    max_usd = float(
-        payload.max_usd if payload.max_usd is not None else settings.research_max_usd
-    )
+    max_usd = float(payload.max_usd if payload.max_usd is not None else settings.research_max_usd)
     event_id = str(ctx.event.id) if ctx.event.id else None
 
     async def _init_row() -> dict[str, Any]:
@@ -209,7 +207,8 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
 
         iterations_used = iteration
         hop_queries = [
-            q for q in current_queries[: settings.research_max_subqueries_per_hop]
+            q
+            for q in current_queries[: settings.research_max_subqueries_per_hop]
             if q not in executed_queries
         ]
         if not hop_queries:
@@ -265,8 +264,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
                     "cumulative_passages": len(evidence_pool),
                     "decision": "stop_budget_exceeded",
                     "rationale": (
-                        f"Accumulated cost ${total_cost_usd:.4f} "
-                        f"reached max_usd=${max_usd:.4f}."
+                        f"Accumulated cost ${total_cost_usd:.4f} reached max_usd=${max_usd:.4f}."
                     ),
                     "step_cost_usd": 0.0,
                 }
@@ -322,9 +320,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
             stop_reason = "sufficient_coverage"
             break
 
-        current_queries = [
-            q for q in reflection.followup_queries if q not in executed_queries
-        ]
+        current_queries = [q for q in reflection.followup_queries if q not in executed_queries]
 
     # Step N+1: Synthesize the final cited research report
     prompt_limit = max(settings.retrieval_limit * 2, 8)

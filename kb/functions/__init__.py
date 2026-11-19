@@ -1,6 +1,4 @@
-"""The function list passed to `inngest.fast_api.serve(...)` in `kb/main.py`.
-
-"""
+"""The function list passed to `inngest.fast_api.serve(...)` in `kb/main.py`."""
 
 import inngest
 
@@ -24,4 +22,3 @@ FUNCTIONS: list[inngest.Function] = [
     run_research_agent,
     generate_weekly_digest,
 ]
-

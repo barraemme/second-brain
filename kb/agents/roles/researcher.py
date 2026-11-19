@@ -118,9 +118,7 @@ def merge_hop_candidates(
     Returns `(sorted_merged_pool, newly_added_count)`.
     """
     by_id: dict[str, dict[str, Any]] = {
-        str(item["passage_id"]): dict(item)
-        for item in existing_pool
-        if item.get("passage_id")
+        str(item["passage_id"]): dict(item) for item in existing_pool if item.get("passage_id")
     }
     newly_added = 0
 
@@ -391,8 +389,6 @@ def heuristic_synthesize_digest(
             "the perspective in [1] with the trade-offs documented in [2]."
         )
     else:
-        lines.append(
-            "- Single-publication highlights dominated this window; see cited claims [1]."
-        )
+        lines.append("- Single-publication highlights dominated this window; see cited claims [1].")
 
     return "\n".join(lines)

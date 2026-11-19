@@ -1,5 +1,4 @@
-"""`kb-mcp` entrypoint. stdio transport.
-"""
+"""`kb-mcp` entrypoint. stdio transport."""
 
 from __future__ import annotations
 
@@ -100,15 +99,12 @@ mcp.add_tool(
 )
 
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(prog="kb-mcp")
     parser.add_argument(
         "--http",
         action="store_true",
-        help=(
-            "Currently a no-op: always serves stdio."
-        ),
+        help=("Currently a no-op: always serves stdio."),
     )
     parser.parse_args()
     mcp.run(transport="stdio")

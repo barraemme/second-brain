@@ -166,14 +166,9 @@ async def hybrid_search(
     )
     (query_embedding,) = embedded["embeddings"]
     dense_results = await search_passages_dense(session, query_embedding, candidate_fetch_limit)
-    graph_results = await search_graph_claims(
-        session, query, limit=settings.graph_retrieval_limit
-    )
+    graph_results = await search_graph_claims(session, query, limit=settings.graph_retrieval_limit)
 
-    fused = [
-        asdict(c)
-        for c in compute_rrf(sparse_results, dense_results, graph_results, k=rrf_k)
-    ]
+    fused = [asdict(c) for c in compute_rrf(sparse_results, dense_results, graph_results, k=rrf_k)]
     return fused[:limit], fused
 
 

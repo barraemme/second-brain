@@ -168,4 +168,3 @@ async def call_llm(
         return {"output": validated.model_dump(mode="json"), "usage": usage}
 
     return {"output": str(parsed_output or ""), "usage": usage}
-

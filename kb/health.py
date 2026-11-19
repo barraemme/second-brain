@@ -62,4 +62,3 @@ async def check_health() -> dict[str, object]:
         "claims": claims,
         "topics": topics,
     }
-

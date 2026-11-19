@@ -97,4 +97,3 @@ def validate_and_normalize_claims(
         )
 
     return validated, dropped_spans
-

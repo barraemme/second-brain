@@ -77,11 +77,7 @@ def requires_disagreement_check(retrieved: list[dict[str, Any]], prompt_limit: i
         for r in top
         if r.get("author") and str(r.get("author")).strip().lower() != "unknown"
     }
-    pubs = {
-        str(r.get("publication")).strip().lower()
-        for r in top
-        if r.get("publication")
-    }
+    pubs = {str(r.get("publication")).strip().lower() for r in top if r.get("publication")}
     return len(authors) >= 2 or len(pubs) >= 2
 
 
@@ -114,20 +110,59 @@ def format_judge_input(
 
 _STOPWORDS = frozenset(
     {
-        "the", "and", "for", "that", "with", "this", "from", "are", "was", "were",
-        "have", "has", "had", "not", "but", "what", "when", "where", "which", "who",
-        "how", "why", "can", "will", "into", "over", "under", "more", "than", "only",
-        "also", "their", "they", "them", "these", "those", "such", "some", "other",
-        "while", "whereas", "across", "using", "uses", "used", "does",
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "from",
+        "are",
+        "was",
+        "were",
+        "have",
+        "has",
+        "had",
+        "not",
+        "but",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "how",
+        "why",
+        "can",
+        "will",
+        "into",
+        "over",
+        "under",
+        "more",
+        "than",
+        "only",
+        "also",
+        "their",
+        "they",
+        "them",
+        "these",
+        "those",
+        "such",
+        "some",
+        "other",
+        "while",
+        "whereas",
+        "across",
+        "using",
+        "uses",
+        "used",
+        "does",
     }
 )
 
 
 def _content_tokens(text: str) -> set[str]:
     return {
-        t
-        for t in re.findall(r"[a-z0-9_]+", text.lower())
-        if len(t) >= 4 and t not in _STOPWORDS
+        t for t in re.findall(r"[a-z0-9_]+", text.lower()) if len(t) >= 4 and t not in _STOPWORDS
     }
 
 
@@ -169,15 +204,10 @@ def heuristic_judge_faithfulness(
     # Check epistemic inflation: if all cited passages are 'prediction' or 'opinion',
     # flag answers claiming "empirical benchmarks prove as an established measurement"
     lower_answer = answer_text.lower()
-    non_measurements = [
-        p for p in top if p.get("claim_type") in ("prediction", "opinion")
-    ]
-    if (
-        len(non_measurements) == len(top)
-        and re.search(
-            r"\b(benchmarks?\s+prove|established\s+measurement|empirically\s+proven)\b",
-            lower_answer,
-        )
+    non_measurements = [p for p in top if p.get("claim_type") in ("prediction", "opinion")]
+    if len(non_measurements) == len(top) and re.search(
+        r"\b(benchmarks?\s+prove|established\s+measurement|empirically\s+proven)\b",
+        lower_answer,
     ):
         return BinaryVerdict(
             critique=(
@@ -191,8 +221,7 @@ def heuristic_judge_faithfulness(
 
     # Check token grounding overlap between answer and retrieved passages
     context_blob = " ".join(
-        f"{p.get('text', '')} {p.get('claim_text', '')} {p.get('author', '')}"
-        for p in top
+        f"{p.get('text', '')} {p.get('claim_text', '')} {p.get('author', '')}" for p in top
     )
     ctx_tokens = _content_tokens(context_blob) | _content_tokens(question)
     ans_tokens = _content_tokens(answer_text)
