@@ -41,7 +41,7 @@ def heuristic_extract_claims(
     *,
     max_claims: int = 5,
 ) -> ClaimExtractionBatch:
-    """Deterministic fallback extractor used only when `ANTHROPIC_API_KEY` is not set.
+    """Deterministic fallback extractor used only when `OPENAI_API_KEY` is not set.
 
     Splits the article into sentences, finds sentences mentioning known domain
     entities, and uses the exact sentence from `article_text` as `quote_span`

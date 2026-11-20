@@ -1,4 +1,4 @@
-"""Thin async wrappers around Anthropic (and optional OpenAI fallback) with token
+"""Thin async wrapper around OpenAI with token and USD cost calculation.
 and USD cost calculation.
 
 Every call returns a `"usage"` dictionary shaped for `CostCaptureMiddleware`
@@ -13,17 +13,24 @@ import re
 import uuid
 from typing import Any
 
-import anthropic
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from kb.config import settings
 from kb.db.queries import insert_cost
 from kb.db.session import get_session
 
-_anthropic_client: anthropic.AsyncAnthropic | None = None
+_openai_client: AsyncOpenAI | None = None
 
-# Per-million-token pricing table (input_usd, output_usd)
+# Per-million-token pricing table (input_usd, output_usd). Updated for OpenAI models
+# with local-compatible pricing estimates.
 MODEL_PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
+    # OpenAI models
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00),
+    "gpt-4": (30.00, 60.00),
+    "gpt-3.5-turbo": (0.50, 1.50),
     "claude-haiku-5-5": (1.00, 5.00),
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-haiku-4-5-20251001": (1.00, 5.00),
@@ -32,19 +39,18 @@ MODEL_PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-sonnet-5-5": (3.00, 15.00),
     "claude-3-5-sonnet-latest": (3.00, 15.00),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
 }
 
 
-def get_anthropic_client() -> anthropic.AsyncAnthropic | None:
-    """Return a lazily-initialized `AsyncAnthropic` client if `ANTHROPIC_API_KEY` is set."""
-    global _anthropic_client
-    if not settings.anthropic_api_key:
-        return None
-    if _anthropic_client is None:
-        _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _anthropic_client
+def get_openai_client() -> AsyncOpenAI:
+    """Return a lazily-initialized `AsyncOpenAI` client."""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(
+            api_key=settings.openai_api_key or "sk-local",
+            base_url=settings.openai_api_base,
+        )
+    return _openai_client
 
 
 def estimate_llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -52,8 +58,8 @@ def estimate_llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> 
     in_price, out_price = MODEL_PRICING_PER_MTOK.get(
         model,
         (
-            settings.anthropic_input_price_per_million_tokens,
-            settings.anthropic_output_price_per_million_tokens,
+            settings.openai_input_price_per_million_tokens,
+            settings.openai_output_price_per_million_tokens,
         ),
     )
     usd = (input_tokens / 1_000_000) * in_price + (output_tokens / 1_000_000) * out_price
@@ -100,35 +106,35 @@ async def call_llm(
     article_id: uuid.UUID | None = None,
     persist_cost: bool = False,
 ) -> dict[str, Any]:
-    """Invoke Anthropic Claude (with native JSON schema `output_config` when
+    """Invoke OpenAI chat completion (with native JSON schema `response_format` when
     `output_schema` is provided) and return `{"output": ..., "usage": {...}}`.
     """
-    llm = get_anthropic_client()
-    if llm is None:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not configured; cannot invoke live Anthropic model."
-        )
+    client = get_openai_client()
 
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_input}],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input},
+        ],
     }
 
     if output_schema is not None:
-        kwargs["output_config"] = {
-            "format": {
-                "type": "json_schema",
-                "schema": anthropic.transform_schema(output_schema),
-            }
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "output",
+                "schema": output_schema.model_json_schema(),
+            },
         }
 
-    response = await llm.messages.create(**kwargs)
+    response = await client.chat.completions.create(**kwargs)
 
+    # OpenAI usage fields
     usage_obj = getattr(response, "usage", None)
-    input_tokens = int(getattr(usage_obj, "input_tokens", 0) or 0)
-    output_tokens = int(getattr(usage_obj, "output_tokens", 0) or 0)
+    input_tokens = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage_obj, "completion_tokens", 0) or 0)
     est_usd = estimate_llm_cost_usd(model, input_tokens, output_tokens)
 
     usage: dict[str, Any] = {
@@ -148,20 +154,16 @@ async def call_llm(
             article_id=article_id,
         )
 
+    # Parse the response content
     parsed_output: Any = None
-    for block in response.content:
-        block_type = getattr(block, "type", None)
-        if block_type == "tool_use" and hasattr(block, "input"):
-            parsed_output = block.input
-            break
-        if block_type == "text" and hasattr(block, "text"):
-            text_val = str(block.text)
-            if output_schema is not None:
-                cleaned = _extract_json_object(text_val)
-                parsed_output = json.loads(cleaned)
-            else:
-                parsed_output = text_val
-            break
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        text_val = choice.message.content or ""
+        if output_schema is not None:
+            cleaned = _extract_json_object(text_val)
+            parsed_output = json.loads(cleaned)
+        else:
+            parsed_output = text_val
 
     if output_schema is not None:
         validated = output_schema.model_validate(parsed_output)

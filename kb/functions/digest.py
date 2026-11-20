@@ -98,7 +98,7 @@ async def generate_weekly_digest(ctx: inngest.Context) -> dict[str, object]:
             return {
                 "output": heuristic_synthesize_digest(title, [], topics),
             }
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             topics_summary = "\n".join(
                 f"- {t['name']} (publications: {', '.join(t.get('publications', []))}; "
                 f"claims: {t['claim_count']})"

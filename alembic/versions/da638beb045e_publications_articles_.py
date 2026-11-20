@@ -1,7 +1,7 @@
 """publications, articles, passages, cursors, jobs, costs
 
 Revision ID: da638beb045e
-Revises: 
+Revises:
 Create Date: 2026-09-19 18:41:29.570007
 
 """
@@ -85,7 +85,7 @@ def upgrade() -> None:
     sa.Column('article_id', sa.UUID(), nullable=False),
     sa.Column('chunk_index', sa.Integer(), nullable=False),
     sa.Column('text', sa.Text(), nullable=False),
-    sa.Column('embedding', pgvector.sqlalchemy.vector.VECTOR(dim=1536), nullable=True),
+    sa.Column('embedding', pgvector.sqlalchemy.vector.VECTOR(dim=1024), nullable=True),
     sa.Column('valid_from', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('valid_to', sa.DateTime(timezone=True), nullable=True),
     sa.ForeignKeyConstraint(['article_id'], ['articles.id'], ),

@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- External services ---
-    anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_api_base: str = "http://127.0.0.1:8000/v1"
     database_url: str = (
         "postgresql+asyncpg://second_brain:second_brain_pw@localhost:5433/second_brain"
     )
@@ -33,11 +33,11 @@ class Settings(BaseSettings):
     chunk_overlap: int = 150
 
     # --- Embeddings ---
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embedding_model: str = "Qwen3-Embedding-0.6B-4bit-DWQ"
+    embedding_dimensions: int = 1024
     embedding_batch_size: int = 96
     # Verified 2026-09-19 against OpenAI's pricing page; no output-token cost for embeddings.
-    embedding_price_per_million_tokens: float = 0.02
+    embedding_price_per_million_tokens: float = 0
 
     # --- Discovery & backfill ---
     discovery_limit: int = 5
@@ -62,23 +62,20 @@ class Settings(BaseSettings):
     # --- Retrieval & answers (week 2) ---
     rrf_k: int = 60
     retrieval_limit: int = 5
-    synthesis_model: str = "claude-haiku-5-5"
+    synthesis_model: str = "gpt-4o-mini"
     synthesis_max_tokens: int = 1024
 
     # --- Claim extraction & Memgraph graph (week 4) ---
     memgraph_uri: str = "bolt://localhost:7687"
     memgraph_user: str = ""
     memgraph_password: str = ""
-    extraction_model: str = "claude-haiku-5-5"
+    extraction_model: str = "gpt-4o-mini"
     extraction_max_tokens: int = 4096
     graph_retrieval_limit: int = 15
     concurrency_extract_claims: int = 2
-    # Anthropic Claude pricing per million tokens (USD) for CostCaptureMiddleware
-    anthropic_input_price_per_million_tokens: float = 1.00
-    anthropic_output_price_per_million_tokens: float = 5.00
 
     # --- Evaluation suite & binary LLM judges (week 5) ---
-    eval_judge_model: str = "claude-haiku-5-5"
+    eval_judge_model: str = "gpt-4o-mini"
     eval_judge_max_tokens: int = 1024
     concurrency_eval_runs: int = 2
     eval_taxonomy_file: str = "evals/taxonomy.yaml"
@@ -88,7 +85,7 @@ class Settings(BaseSettings):
     eval_min_tnr: float = 0.90
 
     # --- Bounded research agent & weekly digest (week 6) ---
-    research_model: str = "claude-haiku-5-5"
+    research_model: str = "gpt-4o-mini"
     research_max_tokens: int = 2048
     research_max_iterations: int = 3
     research_max_subqueries_per_hop: int = 3

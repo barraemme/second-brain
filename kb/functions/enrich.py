@@ -57,7 +57,7 @@ from kb.sources.quote_validator import validate_and_normalize_claims
             key="event.data.canonical_id",
             limit=1,
         ),
-        # Global concurrency cap to protect the Anthropic rate limit
+        # Global concurrency cap to protect the API rate limit
         inngest.Concurrency(
             limit=settings.concurrency_extract_claims,
         ),
@@ -109,7 +109,7 @@ async def extract_claims(ctx: inngest.Context) -> dict[str, object]:
         article_text=str(article_data["text"]),
     )
 
-    if settings.anthropic_api_key:
+    if settings.openai_api_key:
         extraction_batch = await run_agent(
             step=ctx.step,
             agent=claim_extractor_agent,

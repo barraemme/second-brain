@@ -119,7 +119,7 @@ async def evaluate_answer(ctx: inngest.Context) -> dict[str, object]:
         prompt_limit=settings.retrieval_limit,
     )
 
-    if settings.anthropic_api_key:
+    if settings.openai_api_key:
         faith_verdict_obj = await run_agent(
             step=ctx.step,
             agent=faithfulness_judge_agent,
@@ -148,7 +148,7 @@ async def evaluate_answer(ctx: inngest.Context) -> dict[str, object]:
         failure_codes.append(faith_verdict_obj.failure_code)
 
     if requires_disagreement_check(retrieved, prompt_limit=settings.retrieval_limit):
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             dis_obj = await run_agent(
                 step=ctx.step,
                 agent=disagreement_judge_agent,

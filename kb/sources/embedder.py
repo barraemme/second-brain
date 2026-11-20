@@ -20,7 +20,10 @@ def _get_client() -> AsyncOpenAI:
     # (and the tests) load fine without OPENAI_API_KEY.
     global _client
     if _client is None:
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_api_base,
+        )
     return _client
 
 

@@ -5,7 +5,7 @@ loop directly on Inngest durable steps (`ctx.step.run`):
 
 1. `record-research-start`: Initialize the `research_runs` row with `status="running"`.
 2. `plan-subqueries`: Decompose the user's question via `query_planner_agent` (or
-   deterministic fallback when `ANTHROPIC_API_KEY` is unset).
+   deterministic fallback when `OPENAI_API_KEY` is unset).
 3. `hop-{i}-retrieve` & `hop-{i}-reflect` (bounded by `max_iterations` and `max_usd`):
    - Run 3-way hybrid retrieval (`BM25 + pgvector + Memgraph`) across the hop's sub-queries.
    - Deduplicate candidates into the cumulative evidence pool (`merge_hop_candidates`).
@@ -99,7 +99,7 @@ def _make_reflect_step(
     iteration: int,
 ) -> Any:
     async def _reflect_hop() -> dict[str, Any]:
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             return await call_llm(
                 system_prompt=coverage_critic_agent.system_prompt,
                 user_input=prompt,
@@ -166,7 +166,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
 
     # Step 1: Decompose question into initial sub-queries
     async def _plan_subqueries() -> dict[str, Any]:
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             return await call_llm(
                 system_prompt=query_planner_agent.system_prompt,
                 user_input=f"Research Question: {payload.question}",
@@ -331,7 +331,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
             return {
                 "output": heuristic_synthesize_research(payload.question, []),
             }
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             synth_input = (
                 f"Context Sources:\n{format_evidence_context(top_evidence)}\n\n"
                 f"Research Question: {payload.question}\n\n"
@@ -373,7 +373,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
         )
 
         eval_cost = 0.0
-        if settings.anthropic_api_key:
+        if settings.openai_api_key:
             f_res = await call_llm(
                 system_prompt=faithfulness_judge_agent.system_prompt,
                 user_input=judge_input,
@@ -397,7 +397,7 @@ async def run_research_agent(ctx: inngest.Context) -> dict[str, object]:
                 failure_codes.append(code_prefix)
 
         if requires_disagreement_check(evidence_pool, prompt_limit=prompt_limit):
-            if settings.anthropic_api_key:
+            if settings.openai_api_key:
                 d_res = await call_llm(
                     system_prompt=disagreement_judge_agent.system_prompt,
                     user_input=judge_input,

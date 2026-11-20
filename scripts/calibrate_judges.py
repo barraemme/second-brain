@@ -100,7 +100,7 @@ async def run_calibration(mode: str) -> CalibrationReport:
 
     for trace in traces:
         human_verdict = str(trace["human_verdict"]).upper()
-        if mode == "live" and settings.anthropic_api_key:
+        if mode == "live" and settings.openai_api_key:
             eval_res = await _evaluate_trace_live(trace)
             critique = str(eval_res["critique"])
         else:
@@ -137,7 +137,7 @@ def main() -> None:
         "--mode",
         choices=("offline", "live"),
         default="offline",
-        help="'offline' runs deterministic + heuristic judges; 'live' calls Anthropic.",
+        help="'offline' runs deterministic + heuristic judges; 'live' calls OpenAI.",
     )
     args = parser.parse_args()
 

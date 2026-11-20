@@ -5,7 +5,7 @@ Defines:
 - `coverage_critic_agent` (`Agent[CoverageReflection]`)
 - `research_synthesizer_agent` (`Agent[Any]`)
 - `weekly_digest_agent` (`Agent[Any]`)
-plus deterministic fallbacks for offline/unit-test execution when `ANTHROPIC_API_KEY`
+plus deterministic fallbacks for offline/unit-test execution when `OPENAI_API_KEY`
 is unset, and multi-hop evidence deduplication (`merge_hop_candidates`).
 """
 
@@ -193,7 +193,7 @@ def heuristic_plan_queries(
     *,
     max_subqueries: int = 3,
 ) -> ResearchPlan:
-    """Deterministic query decomposition used when `ANTHROPIC_API_KEY` is unset."""
+    """Deterministic query decomposition used when `OPENAI_API_KEY` is unset."""
     clean_q = " ".join(question.split()).strip()
     lower = clean_q.lower()
 
@@ -243,7 +243,7 @@ def heuristic_reflect_coverage(
     target_topics: list[str],
     iteration: int,
 ) -> CoverageReflection:
-    """Deterministic critic fallback when `ANTHROPIC_API_KEY` is unset."""
+    """Deterministic critic fallback when `OPENAI_API_KEY` is unset."""
     if not evidence_pool:
         followup = f"{question} implementation details"
         if followup in executed_queries:
@@ -298,7 +298,7 @@ def heuristic_synthesize_research(
     question: str,
     top_passages: list[dict[str, Any]],
 ) -> str:
-    """Deterministic research brief synthesizer when `ANTHROPIC_API_KEY` is unset.
+    """Deterministic research brief synthesizer when `OPENAI_API_KEY` is unset.
 
     Produces a grounded, inline-cited brief (`[1]`, `[2]`, ...) that respects
     epistemic `claim_type` labels and surfaces multi-author perspectives so
@@ -357,7 +357,7 @@ def heuristic_synthesize_digest(
     evidence_items: list[dict[str, Any]],
     shared_topics: list[dict[str, Any]],
 ) -> str:
-    """Deterministic weekly digest synthesizer when `ANTHROPIC_API_KEY` is unset."""
+    """Deterministic weekly digest synthesizer when `OPENAI_API_KEY` is unset."""
     if not evidence_items:
         return (
             f"# {title}\n\n"

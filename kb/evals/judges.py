@@ -6,7 +6,7 @@ Follows Hamel Husain's LLM-as-a-Judge methodology:
    emitting `verdict`.
 3. Separate judges per failure mode (`faithfulness_judge_agent` for FM-3/FM-4,
    `disagreement_judge_agent` for FM-5) so evaluation criteria never bleed together.
-4. Deterministic heuristic fallback when `ANTHROPIC_API_KEY` is unset, allowing
+4. Deterministic heuristic fallback when `OPENAI_API_KEY` is unset, allowing
    offline calibration and CI tests to run without external API keys.
 """
 
@@ -173,7 +173,7 @@ def heuristic_judge_faithfulness(
     answer_text: str,
     prompt_limit: int = 5,
 ) -> BinaryVerdict:
-    """Deterministic fallback judge for FM-3 and FM-4 when `ANTHROPIC_API_KEY` is not set."""
+    """Deterministic fallback judge for FM-3 and FM-4 when `OPENAI_API_KEY` is not set."""
     top = retrieved[:prompt_limit]
     if not top:
         if is_abstain_answer(answer_text):

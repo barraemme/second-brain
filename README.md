@@ -41,7 +41,7 @@ Before diving in, make sure you have:
 1. 🐳 [Docker](https://docs.docker.com/get-docker/) running
 2. 📦 [uv](https://docs.astral.sh/uv/) installed
 3. 🔑 An [OpenAI API key](https://platform.openai.com/api-keys) with a little credit (used for embeddings;
-4. 🔑 _(optional)_ An [Anthropic API key](https://console.anthropic.com/) for the answers written by `POST /ask` and `kb_ask`. Without it, they return the retrieved passages only.
+    completions, and LLM judges).
 
 ---
 

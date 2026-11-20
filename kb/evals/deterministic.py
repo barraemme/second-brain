@@ -15,7 +15,7 @@ INLINE_CITATION_RE = re.compile(r"\[(\d+)\]")
 ABSTAIN_PHRASES = (
     "no relevant passages were found",
     "coverage of this topic is limited",
-    "set anthropic_api_key to get an answer",
+    "set OPENAI_API_KEY to get an answer",
 )
 
 
