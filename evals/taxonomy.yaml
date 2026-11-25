@@ -26,7 +26,7 @@ failure_modes:
     evaluator_type: "deterministic_code"
     description: >
       A cited passage or attributed claim has `valid_to IS NOT NULL` (it was
-      superseded by an article edit via Week 3/4 temporal supersession).
+      superseded by an article edit via temporal supersession).
     example_open_code_note: >
       Passage [1] came from a superseded revision of the article before the author
       updated the chunking overlap recommendation.

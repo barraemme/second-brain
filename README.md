@@ -39,7 +39,7 @@ You'll have a system capable of:
 Before diving in, make sure you have:
 
 1. 🐳 [Docker](https://docs.docker.com/get-docker/) running
-2. 📦 [uv](https://docs.astral.sh/uv/) installed
+2. 🥟 [Bun](https://bun.sh/) 1.3 installed
 3. 🔑 An [OpenAI API key](https://platform.openai.com/api-keys) with a little credit (used for embeddings;
     completions, and LLM judges).
 
@@ -54,12 +54,11 @@ Before diving in, make sure you have:
 | **Adminer**            | `localhost:8081`      | Browse Postgres and watch rows land in `articles`, `passages`, and `claims`.                                       |
 | **Inngest dev server** | `localhost:8288`      | Every function, run and step, with its timeline and retries.                                                       |
 | **Memgraph Lab**       | `localhost:3000`      | Visual graph explorer for Cypher queries over `:Publication`, `:Author`, `:Article`, `:Claim`, and `:Topic` nodes. |
-| **Swagger UI**         | `localhost:8000/docs` | Try every endpoint from the browser.                                                                               |
 
 ### Useful commands
 
 ```bash
-make check     # lint (ruff + mypy) and tests
+make check     # lint (Biome + tsc --noEmit) and tests (bun test)
 make stop      # docker compose down (your data is kept)
 make db-clear  # destructive: empties every table and Memgraph, keeps the schema
 make reset     # destructive: docker compose down -v, drops all data
@@ -71,10 +70,10 @@ make nuke      # destructive: reset, plus kills a stray app process on the port
 - `kb/`: the pipeline (`functions/` for Inngest, `agents/` for hand-written agent steps, `graph/` for Memgraph ontology & Cypher, `evals/` for deterministic checks, binary LLM judges & TPR/TNR calibration, `sources/` for fetch/parse/chunk/embed/quote-validation, `db/`, `retrieval/`, `schemas/`, `mcp/` for the MCP server)
 - `evals/`: failure taxonomy (`taxonomy.yaml`), human-labeled traces (`labeled_traces.jsonl`), and the retrieval variant benchmark (`golden_benchmark.yaml`)
 - `publications.yaml`: the allowlist of feeds the pipeline may ingest
-- `alembic/`: database migrations
+- `migrations/`: plain SQL database migrations, applied by `bun run migrate`
 - `infra/docker-compose.yml`: Postgres (pgvector), Adminer, Inngest dev server, Memgraph, Memgraph Lab
-- `scripts/replay_backfill.py` & `scripts/calibrate_judges.py`: replay verifier and TPR/TNR binary judge calibration CLI
-- `tests/`: the unit tests, which need no Docker or API keys
+- `scripts/replay-backfill.ts` & `scripts/calibrate-judges.ts`: replay verifier and TPR/TNR binary judge calibration CLI
+- `tests/` (and `tests/unit/`): the unit tests, which need no Docker or API keys
 - `tests/integration/`: tests that need the stack from `make start` running (they are skipped otherwise)
 
 ---

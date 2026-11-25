@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
     command: >
       inngest dev
-      -u http://host.docker.internal:${LAB_PORT:-8000}/api/inngest
+      -u http://host.docker.internal:${LAB_PORT:-8080}/api/inngest
     ports:
       - "8288:8288"
       - "8289:8289"

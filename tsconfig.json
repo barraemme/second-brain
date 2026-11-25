@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": ["bun"],
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["kb", "scripts", "tests"]
+}

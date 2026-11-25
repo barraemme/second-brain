@@ -1,17 +1,8 @@
 # Claude Code
 .claude/
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-.eggs/
-.venv/
-venv/
-env/
-.Python
-build/
+# Bun / Node
+node_modules/
 dist/
 
 # Environment
@@ -21,11 +12,7 @@ dist/
 .agents
 
 # Testing / tooling caches
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+coverage/
 
 # OS
 .DS_Store
