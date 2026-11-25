@@ -1,0 +1,7 @@
+.git
+.env
+node_modules
+docs
+static
+tests
+scripts
